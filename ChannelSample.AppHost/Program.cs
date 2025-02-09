@@ -2,8 +2,12 @@
 using System.Text.Json.Serialization;
 using ChannelSample.AppHost;
 using ChannelSample.AppHost.Channels;
+using ChannelSample.AppHost.Dispatchers;
+using ChannelSample.AppHost.Repositories;
+using ChannelSample.AppHost.Utils;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using OpenTelemetry;
 using OpenTelemetry.Exporter;
@@ -16,18 +20,18 @@ var builder = WebApplication.CreateBuilder(args);
 // Add services to the container.
 
 builder.Services
-	.AddRouting(options => options.LowercaseUrls = true)
-	.AddControllers(options =>
-	{
-		options.Filters.Add(new ProducesAttribute(MediaTypeNames.Application.Json));
-		options.Filters.Add(new ConsumesAttribute(MediaTypeNames.Application.Json));
-	})
-	.AddJsonOptions(options => options.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter()));
+    .AddRouting(options => options.LowercaseUrls = true)
+    .AddControllers(options =>
+    {
+        options.Filters.Add(new ProducesAttribute(MediaTypeNames.Application.Json));
+        options.Filters.Add(new ConsumesAttribute(MediaTypeNames.Application.Json));
+    })
+    .AddJsonOptions(options => options.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter()));
 // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
 builder.Services.AddOpenApi();
 
 builder.Services.AddOptions<ChannelSettingsOptions>()
-	.Configure((ChannelSettingsOptions options) => builder.Configuration.GetSection("ChannelSettings").Bind(options));
+    .Configure((ChannelSettingsOptions options) => builder.Configuration.GetSection("ChannelSettings").Bind(options));
 
 builder.Services.AddSingleton<IMultipleDispatcher, MultipleDispatcher>();
 
@@ -35,46 +39,52 @@ builder.Services.AddSingleton<SingleChannel>();
 
 builder.Services.AddSingleton(TimeProvider.System);
 
+builder.Services.AddSingleton<ISequenceGeneratorUtil, SequenceGeneratorUtil>();
+
+builder.Services.AddSingleton(new SqliteConnection(builder.Configuration.GetConnectionString("Sqlite")));
+
+builder.Services.AddTransient<IChannelRepo, ChannelRepo>();
+
 builder.Services.AddOpenTelemetry()
-	.ConfigureResource(resource => resource
-	.AddService(builder.Configuration["SERVICE_NAME"]!))
-	.UseOtlpExporter(OtlpExportProtocol.Grpc, new Uri(builder.Configuration["OTLP_ENDPOINT_URL"]!))
-	.WithMetrics(metrics => metrics
-		//.SetResourceBuilder(ResourceBuilder.CreateDefault()
-		//.AddEnvironmentVariableDetector())
-		.AddMeter("MassTransitRabbitMQSample.")
-		.AddPrometheusExporter()
-		//.AddConsoleExporter()
-		.AddRuntimeInstrumentation()
-		.AddAspNetCoreInstrumentation())
-	.WithTracing(tracing => tracing
-		//.SetResourceBuilder(ResourceBuilder.CreateDefault()
-		//.AddEnvironmentVariableDetector())
-		.AddHttpClientInstrumentation()
-		.AddGrpcClientInstrumentation()
-		.AddGrpcCoreInstrumentation()
-		.AddEntityFrameworkCoreInstrumentation(options => options.SetDbStatementForText = true)
-		.AddAspNetCoreInstrumentation(options => options.Filter = (httpContext) =>
-				!httpContext.Request.Path.StartsWithSegments("/openapi", StringComparison.OrdinalIgnoreCase) &&
-				!httpContext.Request.Path.StartsWithSegments("/swagger", StringComparison.OrdinalIgnoreCase) &&
-				!httpContext.Request.Path.StartsWithSegments("/healthz", StringComparison.OrdinalIgnoreCase) &&
-				!httpContext.Request.Path.Value!.Equals("/api/events/raw", StringComparison.OrdinalIgnoreCase) &&
-				!httpContext.Request.Path.Value!.EndsWith(".js", StringComparison.OrdinalIgnoreCase) &&
-				!httpContext.Request.Path.StartsWithSegments("/_vs", StringComparison.OrdinalIgnoreCase)))
-	.WithLogging();
+    .ConfigureResource(resource => resource
+    .AddService(builder.Configuration["SERVICE_NAME"]!))
+    .UseOtlpExporter(OtlpExportProtocol.Grpc, new Uri(builder.Configuration["OTLP_ENDPOINT_URL"]!))
+    .WithMetrics(metrics => metrics
+        //.SetResourceBuilder(ResourceBuilder.CreateDefault()
+        //.AddEnvironmentVariableDetector())
+        .AddMeter("MassTransitRabbitMQSample.")
+        .AddPrometheusExporter()
+        //.AddConsoleExporter()
+        .AddRuntimeInstrumentation()
+        .AddAspNetCoreInstrumentation())
+    .WithTracing(tracing => tracing
+        //.SetResourceBuilder(ResourceBuilder.CreateDefault()
+        //.AddEnvironmentVariableDetector())
+        .AddHttpClientInstrumentation()
+        .AddGrpcClientInstrumentation()
+        .AddGrpcCoreInstrumentation()
+        .AddEntityFrameworkCoreInstrumentation(options => options.SetDbStatementForText = true)
+        .AddAspNetCoreInstrumentation(options => options.Filter = (httpContext) =>
+                !httpContext.Request.Path.StartsWithSegments("/openapi", StringComparison.OrdinalIgnoreCase) &&
+                !httpContext.Request.Path.StartsWithSegments("/swagger", StringComparison.OrdinalIgnoreCase) &&
+                !httpContext.Request.Path.StartsWithSegments("/healthz", StringComparison.OrdinalIgnoreCase) &&
+                !httpContext.Request.Path.Value!.Equals("/api/events/raw", StringComparison.OrdinalIgnoreCase) &&
+                !httpContext.Request.Path.Value!.EndsWith(".js", StringComparison.OrdinalIgnoreCase) &&
+                !httpContext.Request.Path.StartsWithSegments("/_vs", StringComparison.OrdinalIgnoreCase)))
+    .WithLogging();
 
 builder.Services
-	.AddHealthChecks()
-	.AddCheck("self", () => HealthCheckResult.Healthy(), ["live"]);
+    .AddHealthChecks()
+    .AddCheck("self", () => HealthCheckResult.Healthy(), ["live"]);
 
 var app = builder.Build();
 
 // Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())
 {
-	app.MapOpenApi();
+    app.MapOpenApi();
 
-	_ = app.UseSwaggerUI(options => options.SwaggerEndpoint("/openapi/v1.json", "OpenAPI V1"));
+    _ = app.UseSwaggerUI(options => options.SwaggerEndpoint("/openapi/v1.json", "OpenAPI V1"));
 }
 
 app.UseHttpsRedirection();
@@ -85,19 +95,21 @@ app.MapControllers();
 
 using (var scope = app.Services.CreateScope())
 {
-	var channel = scope.ServiceProvider.GetRequiredService<SingleChannel>();
-	using var cts = new CancellationTokenSource();
-	await channel.PrepareAsync(cts.Token).ConfigureAwait(false);
+    var channel = scope.ServiceProvider.GetRequiredService<SingleChannel>();
+    var channelRepo = scope.ServiceProvider.GetRequiredService<IChannelRepo>();
+    using var cts = new CancellationTokenSource();
+    await channel.PrepareAsync(cts.Token).ConfigureAwait(false);
+    await channelRepo.InitialAsync(cts.Token).ConfigureAwait(false);
 }
 
 app.MapHealthChecks("/live", new HealthCheckOptions
 {
-	Predicate = check => check.Tags.Contains("live")
+    Predicate = check => check.Tags.Contains("live")
 });
 
 app.MapHealthChecks("/healthz", new HealthCheckOptions
 {
-	Predicate = _ => true
+    Predicate = _ => true
 });
 
 app.Run();

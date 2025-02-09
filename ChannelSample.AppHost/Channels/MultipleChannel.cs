@@ -1,6 +1,9 @@
 ﻿using System.Diagnostics;
 using System.Text.Json;
 using System.Threading.Channels;
+
+using ChannelSample.AppHost.Models;
+
 using Microsoft.Extensions.Options;
 
 namespace ChannelSample.AppHost.Channels;
@@ -8,11 +11,12 @@ namespace ChannelSample.AppHost.Channels;
 internal class MultipleChannel(
 	ILogger<MultipleChannel> logger,
 	IOptions<ChannelSettingsOptions> options,
+	IServiceProvider serviceProvider,
 	string key) : IDisposable, IAsyncDisposable
 {
 	private static readonly ActivitySource _ActivitySource = new(name: typeof(MultipleChannel).FullName!);
 
-	private readonly Channel<MultipleCommand> _channel = Channel.CreateUnbounded<MultipleCommand>(
+	private readonly Channel<ChannelCommand> _channel = Channel.CreateUnbounded<ChannelCommand>(
 		new UnboundedChannelOptions
 		{
 			SingleReader = true
@@ -70,7 +74,7 @@ internal class MultipleChannel(
 		}
 	}
 
-	public async ValueTask PushCommandAsync(MultipleCommand command, CancellationToken cancellationToken = default)
+	public async ValueTask PushCommandAsync(ChannelCommand command, CancellationToken cancellationToken = default)
 	{
 		using var cts = CancellationTokenSource.CreateLinkedTokenSource(
 			cancellationToken,
@@ -146,9 +150,21 @@ internal class MultipleChannel(
 						}));
 
 					await Task.Delay(
-						TimeSpan.FromSeconds(5),
+						TimeSpan.FromSeconds(1),
 						cancellationToken)
 						.ConfigureAwait(false);
+
+					using (var scope = serviceProvider.CreateScope())
+					{
+						var channelRepo = scope.ServiceProvider.GetRequiredService<IChannelRepo>();
+						await channelRepo.InsertAsync(
+							command.Application,
+							command.Message,
+							command.Sequence,
+							command.MessageAt,
+							cancellationToken)
+							.ConfigureAwait(false);
+					}
 
 					logger.LogInformation("{logInformation}",
 						JsonSerializer.Serialize(new

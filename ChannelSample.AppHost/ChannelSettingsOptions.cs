@@ -2,5 +2,5 @@
 
 public record ChannelSettingsOptions
 {
-	public int Expiry { get; init; } = 900;
+    public int Expiry { get; init; } = 900;
 }

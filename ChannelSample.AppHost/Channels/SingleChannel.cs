@@ -2,13 +2,17 @@
 using System.Text.Json;
 using System.Threading.Channels;
 
+using ChannelSample.AppHost.Models;
+
 namespace ChannelSample.AppHost.Channels;
 
-public class SingleChannel(ILogger<SingleChannel> logger) : IDisposable, IAsyncDisposable
+public class SingleChannel(
+	ILogger<SingleChannel> logger,
+	IServiceProvider serviceProvider) : IDisposable, IAsyncDisposable
 {
 	private static readonly ActivitySource _ActivitySource = new(name: typeof(SingleChannel).FullName!);
 
-	private readonly Channel<SingleCommand> _channel = Channel.CreateUnbounded<SingleCommand>(
+	private readonly Channel<ChannelCommand> _channel = Channel.CreateUnbounded<ChannelCommand>(
 		new UnboundedChannelOptions
 		{
 			SingleReader = true
@@ -52,14 +56,14 @@ public class SingleChannel(ILogger<SingleChannel> logger) : IDisposable, IAsyncD
 		}
 	}
 
-	public async ValueTask PushCommandAsync(SingleCommand request, CancellationToken cancellationToken = default)
+	public async ValueTask PushCommandAsync(ChannelCommand command, CancellationToken cancellationToken = default)
 	{
 		using var cts = CancellationTokenSource.CreateLinkedTokenSource(
 			token1: cancellationToken,
 			token2: _cancellationTokenSource.Token);
 
 		await _channel.Writer.WriteAsync(
-			item: request,
+			item: command,
 			cancellationToken: cts.Token).ConfigureAwait(false);
 	}
 
@@ -119,9 +123,21 @@ public class SingleChannel(ILogger<SingleChannel> logger) : IDisposable, IAsyncD
 						}));
 
 					await Task.Delay(
-						TimeSpan.FromSeconds(5),
+						TimeSpan.FromSeconds(1),
 						cancellationToken)
 						.ConfigureAwait(false);
+
+					using (var scope = serviceProvider.CreateScope())
+					{
+						var channelRepo = scope.ServiceProvider.GetRequiredService<IChannelRepo>();
+						await channelRepo.InsertAsync(
+							command.Application,
+							command.Message,
+							command.Sequence,
+							command.MessageAt,
+							cancellationToken)
+							.ConfigureAwait(false);
+					}
 
 					logger.LogInformation("{logInformation}",
 						JsonSerializer.Serialize(new

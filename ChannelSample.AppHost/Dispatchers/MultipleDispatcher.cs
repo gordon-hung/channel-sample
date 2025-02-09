@@ -1,7 +1,8 @@
 ﻿using System.Collections.Concurrent;
 using ChannelSample.AppHost.Channels;
+using ChannelSample.AppHost.Models;
 
-namespace ChannelSample.AppHost;
+namespace ChannelSample.AppHost.Dispatchers;
 
 internal class MultipleDispatcher(IServiceProvider serviceProvider) : IMultipleDispatcher, IDisposable, IAsyncDisposable
 {
@@ -15,7 +16,7 @@ internal class MultipleDispatcher(IServiceProvider serviceProvider) : IMultipleD
 		Dispose(false);
 	}
 
-	public async ValueTask PushCommandAsync(MultipleCommand command, CancellationToken cancellationToken = default)
+	public async ValueTask PushCommandAsync(ChannelCommand command, CancellationToken cancellationToken = default)
 	{
 		using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _cancellationTokenSource.Token);
 
@@ -67,9 +68,7 @@ internal class MultipleDispatcher(IServiceProvider serviceProvider) : IMultipleD
 		if (!_disposedValue)
 		{
 			if (disposing)
-			{
 				_cancellationTokenSource.Cancel();
-			}
 
 			_cancellationTokenSource.Dispose();
 			_disposedValue = true;

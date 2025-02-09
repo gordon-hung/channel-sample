@@ -4,6 +4,6 @@ namespace ChannelSample.AppHost.ViewModels;
 
 public record MessageRequest
 {
-	[Required]
-	public string Message { get; init; } = default!;
+    [Required]
+    public string Message { get; init; } = default!;
 }
